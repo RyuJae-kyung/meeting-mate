@@ -1,0 +1,95 @@
+// 브라우저 E2E: 회원가입 → 회의 생성(+자료 4종) → 브리핑 생성/수정 → 용어/개인 브리핑 → 이메일 미리보기·확인·발송·예약 → 개인 링크
+// 실행: node e2e/flow.js   (APP_URL, API_URL 환경변수로 대상 변경 가능, playwright 필요)
+const { chromium } = require('playwright');
+const API = process.env.API_URL || 'http://localhost:8000';
+const path = require('path'); const S = path.join(__dirname, '..', 'samples') + '/';
+const SHOT = path.join(__dirname, 'screenshots') + '/'; require('fs').mkdirSync(SHOT, { recursive: true });
+(async () => {
+  const b = await chromium.launch();
+  const ctx = await b.newContext({ viewport: { width: 1360, height: 900 }, timezoneId: 'Asia/Seoul' }); const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push('pageerror: ' + e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
+  const email = `e2e${Date.now()}@test.com`;
+  await page.goto('' + (process.env.APP_URL || 'http://localhost:5173') + '/register');
+  await page.fill('#name', '홍주최'); await page.fill('#email', email); await page.fill('#pw', 'password123'); await page.fill('#job', '서비스 기획');
+  await page.click('button:has-text("가입하기")');
+  await page.waitForSelector('text=안녕하세요');
+  await page.click('a:has-text("+ 새 회의")');
+  await page.fill('#title', 'MES-ERP 연동 프로젝트 킥오프');
+  await page.fill('#purpose', 'MES와 ERP 연동 프로젝트의 1차 범위, 일정, 예산을 합의한다.');
+  await page.fill('#start', '2026-11-12T14:00'); await page.fill('#end', '2026-11-12T15:30');
+  await page.fill('#loc', '본사 3층 대회의실');
+  await page.fill('#agenda', '연동 범위 확정\nAPI 개발 일정 검토\n예산 및 리스크 검토\n고객 납기 요구 대응');
+  const rows = [['김개발', 'dev@example.com', '개발 담당자', 'API 연동 및 서버 개발'], ['이기획', 'plan@example.com', '기획 담당자', '요구사항 정리'], ['박팀장', 'lead@example.com', '관리자', '예산 승인'], ['최영업', 'sales@example.com', '영업 담당자', 'A사 고객 대응']];
+  for (let i = 0; i < rows.length; i++) {
+    if (i > 0) await page.click('button:has-text("+ 참석자 추가")');
+    const r = rows[i];
+    await page.locator('input[aria-label="참석자 이름"]').nth(i).fill(r[0]);
+    await page.locator('input[aria-label="참석자 이메일"]').nth(i).fill(r[1]);
+    await page.locator('input[aria-label="역할"]').nth(i).fill(r[2]);
+    await page.locator('input[aria-label="담당 업무"]').nth(i).fill(r[3]);
+  }
+  const fs = require('fs');
+  const mk = (n, t) => ({ name: n, mimeType: t, buffer: fs.readFileSync(S + n) });
+  await page.setInputFiles('input[type=file]', [mk('MES-ERP_연동계획서.pdf', 'application/pdf'), mk('요구사항정의서.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'), mk('킥오프_발표자료.pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'), mk('사전메모.txt', 'text/plain')]);
+  await page.screenshot({ path: SHOT + '01-new.png', fullPage: true });
+  await page.click('button:has-text("회의 등록 및 브리핑 생성")');
+  await page.waitForSelector('text=1. 회의 목적 요약', { timeout: 60000 });
+  await page.screenshot({ path: SHOT + '02-briefing.png', fullPage: true });
+  const url = page.url();
+  console.log('detail url', url);
+  // 브리핑 수정
+  await page.click('button:has-text("브리핑 수정")');
+  await page.locator('textarea[aria-label="내용"]').first().fill('MES-ERP 연동 1차 범위·일정·예산 합의 (주최자 수정)');
+  await page.click('button:has-text("저장")');
+  await page.waitForSelector('text=브리핑이 저장되었습니다');
+  await page.click('nav button:has-text("전문 용어")');
+  await page.waitForSelector('h3:has-text("MES")');
+  await page.screenshot({ path: SHOT + '03-glossary.png', fullPage: true });
+  await page.click('nav button:has-text("참석자별 브리핑")');
+  await page.waitForSelector('text=본인에게 중요한 안건');
+  await page.screenshot({ path: SHOT + '04-personal-dev.png', fullPage: true });
+  await page.click('button:has-text("박팀장")');
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: SHOT + '05-personal-lead.png', fullPage: true });
+  await page.click('nav button:has-text("업로드 자료")');
+  await page.waitForSelector('text=핵심 키워드');
+  await page.screenshot({ path: SHOT + '06-materials.png', fullPage: true });
+  await page.click('nav button:has-text("이메일 발송")');
+  await page.waitForSelector('text=브리핑 이메일 발송');
+  await page.locator('button:has-text("미리보기")').first().click();
+  await page.waitForSelector('iframe[title="미리보기"]');
+  await page.waitForTimeout(500);
+  await page.screenshot({ path: SHOT + '07-preview.png' });
+  await page.keyboard.press('Escape');
+  await page.click('button:has-text("발송 확인으로 이동")');
+  const sendBtn = page.locator('button:has-text("4명에게 발송")');
+  console.log('send disabled before check:', await sendBtn.isDisabled());
+  await page.check('text=미리보기로 내용을 확인했으며');
+  await sendBtn.click();
+  await page.waitForSelector('text=4건 발송 완료');
+  // 회의 전 자동 발송 예약
+  await page.check('text=회의 전 자동 발송');
+  await page.click('button:has-text("발송 확인으로 이동")');
+  await page.check('text=미리보기로 내용을 확인했으며');
+  await page.click('button:has-text("예약 등록")');
+  await page.waitForSelector('text=발송되도록 예약했습니다');
+  await page.screenshot({ path: SHOT + '08-email.png', fullPage: true });
+  // 개인 링크
+  await page.click('nav button:has-text("참석자별 브리핑")');
+  await page.waitForSelector('text=본인에게 중요한 안건');
+  const token = await page.evaluate(async ([id, api]) => { const r = await fetch(`${api}/api/meetings/${id}`, { headers: { Authorization: 'Bearer ' + localStorage.getItem('mm_token') } }); return (await r.json()).participants[0].access_token; }, [url.match(/meetings\/(\d+)/)[1], API]);
+  const pub = await b.newPage({ viewport: { width: 390, height: 844 } });
+  await pub.goto('' + (process.env.APP_URL || 'http://localhost:5173') + '/b/' + token);
+  await pub.waitForSelector('text=나를 위한 브리핑');
+  await pub.screenshot({ path: SHOT + '09-public-mobile.png', fullPage: true });
+  await page.goto('' + (process.env.APP_URL || 'http://localhost:5173') + '/');
+  await page.waitForSelector('text=예약된 발송');
+  await page.screenshot({ path: SHOT + '10-dashboard.png', fullPage: true });
+  await page.goto('' + (process.env.APP_URL || 'http://localhost:5173') + '/settings');
+  await page.waitForSelector('text=Mock AI');
+  await page.screenshot({ path: SHOT + '11-settings.png', fullPage: true });
+  console.log('ERRORS:', JSON.stringify(errors));
+  await b.close();
+})().catch(e => { console.error('FAIL', e); process.exit(1); });
