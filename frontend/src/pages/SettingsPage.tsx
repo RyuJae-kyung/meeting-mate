@@ -48,7 +48,7 @@ export default function SettingsPage() {
           <p className="text-xs text-gray-500">권한: {user?.role === 'admin' ? '관리자 (모든 회의 열람·수정)' : '일반 사용자'}</p>
           <SectionTitle>알림 설정</SectionTitle>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={p.email_notifications} onChange={(e) => setP({ ...p, email_notifications: e.target.checked })} />이메일 알림 받기</label>
-          <p className="text-xs text-gray-500">현재는 설정만 저장됩니다. 후속 업무 마감 알림 기능이 추가되면 이 설정이 적용됩니다.</p>
+          <p className="text-xs text-gray-500">켜 두면 내가 담당자인 후속 업무의 마감 {sys ? `${sys.task_reminder_days_before}일 전부터` : '임박 시'} 알림 이메일을 한 번 받습니다. 끄면 자동 알림을 받지 않습니다.</p>
           <button className="btn-primary" disabled={busy === 'p'}>{busy === 'p' && <Spinner />}저장</button>
         </form>
       </section>
@@ -68,7 +68,8 @@ export default function SettingsPage() {
             <Row label="이메일 발송" value={sys.email_provider === 'resend' ? 'Resend 연결됨' : 'Mock (RESEND_API_KEY 미설정, 실제 발송 안 됨)'} ok={sys.email_provider === 'resend'} />
             <Row label="발신 주소" value={sys.email_from} />
             <Row label="예약 발송 스케줄러" value={sys.scheduler_enabled ? `동작 중 (${sys.scheduler_interval_seconds}초 간격)` : '꺼짐'} ok={sys.scheduler_enabled} />
-            <Row label="Google Calendar" value="연동 예정 (현재 자체 일정 관리)" />
+            <Row label="후속 업무 마감 알림" value={sys.scheduler_enabled ? `마감 ${sys.task_reminder_days_before}일 전부터 1회 자동 발송` : '스케줄러 꺼짐'} ok={sys.scheduler_enabled} />
+            <Row label="Google Calendar" value="API 연동 예정 · 현재는 .ics 파일 내보내기 지원" />
             <Row label="업로드 제한" value={`${sys.allowed_file_types.map((t) => t.toUpperCase()).join(', ')} · ${sys.max_upload_mb}MB`} />
           </div>
         ) : <p className="text-sm text-gray-400">불러오는 중...</p>}

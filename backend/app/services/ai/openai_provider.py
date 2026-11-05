@@ -1,11 +1,12 @@
 """OpenAI 기반 실제 AI 공급자. 모든 호출은 백엔드에서만 이루어진다."""
 import json
 import logging
+from datetime import date
 
 from pydantic import ValidationError
 
 from ...config import get_settings
-from ...schemas import GeneralBriefingContent, GlossaryItemContent, PersonalBriefingContent
+from ...schemas import GeneralBriefingContent, GlossaryItemContent, PersonalBriefingContent, ResultAnalysis
 from .base import AIError, MeetingCtx, ParticipantCtx
 
 log = logging.getLogger(__name__)
@@ -151,3 +152,55 @@ class OpenAIProvider:
         allowed = {t.lower() for t in glossary_terms}
         content["related_terms"] = [t for t in content["related_terms"] if t.lower() in allowed]
         return content
+
+    def answer_question(self, ctx: MeetingCtx, question: str, chunks: list, glossary: list[dict], briefing_summary: str) -> dict:
+        sources = "\n\n".join(f"[{c.ref}] ({c.file} {c.loc})\n{c.text}" for c in chunks) or "(질문과 관련된 자료 조각을 찾지 못함)"
+        terms = "\n".join(f"- {g['term']}: {g['easy_explanation']}" for g in glossary[:20]) or "(없음)"
+        schema = (
+            '{"answer": string, "grounded": "materials"|"partial"|"none", '
+            '"citations": [{"ref": "S1", "quote": string}], "general_knowledge": string|null}'
+        )
+        data = self._chat_json(
+            "너는 회의 자료를 근거로 질문에 답하는 Meeting Mate 조수다.\n"
+            "1. [자료 조각]을 최우선 근거로 사용하고, 근거로 쓴 조각은 citations 에 ref 와 원문 인용(quote)으로 남긴다.\n"
+            "   출처가 'AI 사전 브리핑(추론 포함)'인 조각은 AI가 예상한 내용이므로 사실처럼 단정하지 말고 '브리핑에 따르면' 처럼 밝힌다.\n"
+            "2. 자료만으로 답할 수 있으면 grounded=materials, 자료 + 일반 지식이면 partial, 자료에서 근거를 찾지 못했으면 none.\n"
+            "3. 일반 지식으로 보충한 설명은 answer 가 아니라 general_knowledge 에만 적는다. answer 에는 자료 근거 내용만 쓴다.\n"
+            "4. 근거가 없으면 answer 에 '업로드된 자료에서 근거를 찾을 수 없습니다'라고 분명히 쓴다. 추측으로 사실을 만들지 않는다.\n"
+            "5. 회의 전이라면 어떤 사항도 '결정되었다'고 말하지 않는다. 한국어로 간결하게 답한다.",
+            f"{self._meeting_header(ctx)}\n[브리핑 요약]\n{briefing_summary or '(없음)'}\n\n[전문 용어]\n{terms}\n\n"
+            f"[자료 조각]\n{sources}\n\n[질문]\n{question}\n\n형식:\n{schema}",
+        )
+        answer = str(data.get("answer", "")).strip()
+        if not answer:
+            raise AIError("AI 답변이 비어 있습니다.")
+        grounded = data.get("grounded") if data.get("grounded") in ("materials", "partial", "none") else "partial"
+        cites = [c for c in data.get("citations") or [] if isinstance(c, dict) and c.get("ref")]
+        gk = data.get("general_knowledge")
+        return {"answer": answer, "grounded": grounded, "citations": cites, "general_knowledge": str(gk).strip() if gk else None}
+
+    def analyze_result(self, ctx: MeetingCtx, raw_text: str, reference_date: date) -> dict:
+        people = ", ".join(f"{p.name}({p.role})" for p in ctx.participants) or "(없음)"
+        schema = (
+            '{"summary": string, "decisions": [string], "undecided": [string], "further_discussion": [string], '
+            '"tasks": [{"title": string, "description": string, "assignee_name": string, "due_date": "YYYY-MM-DD"|null, '
+            '"due_text": string|null, "priority": "high"|"medium"|"low", "uncertain": boolean, "evidence": string}]}'
+        )
+        data = self._chat_json(
+            "너는 회의 내용을 분석해 결정 사항과 후속 업무를 정리하는 조수다.\n"
+            "1. 회의 내용에 실제로 나온 것만 정리한다. 없는 결정·업무를 만들지 않는다.\n"
+            "2. decisions 에는 명확히 합의·확정된 것만, 결론이 나지 않은 것은 undecided, 다음에 다시 논의하기로 한 것은 further_discussion.\n"
+            "3. tasks 의 assignee_name 은 회의 내용에 언급된 사람 이름 그대로(참석자 목록 이름 우선). 담당자가 언급되지 않았으면 빈 문자열.\n"
+            f"4. due_date 는 기준일 {reference_date.isoformat()}({'월화수목금토일'[reference_date.weekday()]}요일) 기준으로 계산한 날짜, "
+            "원문 표현은 due_text 에. 마감일이 언급되지 않았으면 due_date=null.\n"
+            "5. 담당자나 마감일이 모호하면 uncertain=true. evidence 에 근거 문장을 인용한다.\n"
+            "6. priority 는 회의에서 급하다고 언급되거나 마감이 가까우면 high, 특별한 언급이 없으면 medium.",
+            f"{self._meeting_header(ctx)}\n참석자: {people}\n\n[회의 내용]\n{raw_text[: self.max_chars]}\n\n형식:\n{schema}",
+        )
+        for t in data.get("tasks") or []:
+            if isinstance(t, dict) and t.get("due_date") in ("", "null"):
+                t["due_date"] = None
+        try:
+            return ResultAnalysis.model_validate(data).model_dump(mode="json")
+        except ValidationError as e:
+            raise AIError(f"AI 회의 결과 형식 검증 실패: {e.errors()[:3]}") from e

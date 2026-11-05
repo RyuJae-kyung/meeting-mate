@@ -51,7 +51,7 @@ export interface GenerateResult {
   meeting_status: MeetingStatus; warnings: string[]
 }
 export interface EmailLog {
-  id: number; meeting_id: number; participant_id: number | null; job_id: number | null; recipient: string
+  id: number; meeting_id: number; participant_id: number | null; job_id: number | null; task_id: number | null; recipient: string
   email_type: string; subject: string; status: 'sent' | 'failed' | 'retrying'; provider: string
   provider_message_id: string | null; error: string | null; attempts: number; sent_at: string | null; created_at: string
 }
@@ -63,12 +63,12 @@ export interface EmailJob {
 export interface EmailPreview { to: string; subject: string; html: string; provider: string }
 export interface Dashboard {
   upcoming: MeetingListItem[]; recent: MeetingListItem[]; ready: MeetingListItem[]
-  recent_emails: EmailLog[]; pending_email_jobs: EmailJob[]
-  counts: { scheduled: number; ready: number; completed: number; failed_emails: number }
+  recent_emails: EmailLog[]; pending_email_jobs: EmailJob[]; open_tasks: Task[]; due_soon_tasks: Task[]
+  counts: { scheduled: number; ready: number; completed: number; failed_emails: number; open_tasks: number; overdue_tasks: number }
 }
 export interface SystemStatus {
   ai_provider: string; ai_model: string | null; email_provider: string; email_from: string
-  scheduler_enabled: boolean; scheduler_interval_seconds: number; calendar: string
+  scheduler_enabled: boolean; scheduler_interval_seconds: number; calendar: string; task_reminder_days_before: number
   max_upload_mb: number; allowed_file_types: string[]
 }
 export interface PublicBriefing {
@@ -76,4 +76,31 @@ export interface PublicBriefing {
   online_url: string | null; agenda_items: string[]; participant_name: string; participant_role: string
   participant_responsibility: string; personal: Briefing<PersonalBriefingContent> | null
   checklist: BriefingItem[]; glossary: GlossaryTerm[]
+}
+
+export interface Citation { file: string; loc: string | null; quote: string }
+export interface Question {
+  id: number; meeting_id: number; user_id: number | null; question: string; answer: string
+  grounded: 'materials' | 'partial' | 'none'; citations: Citation[]; general_knowledge: string | null
+  source: string; created_at: string
+}
+
+export type Priority = 'high' | 'medium' | 'low'
+export type TaskStatus = 'todo' | 'in_progress' | 'done'
+export interface TaskDraft {
+  title: string; description: string; assignee_name: string; assignee_participant_id: number | null
+  due_date: string | null; due_text: string | null; priority: Priority; uncertain: boolean; evidence: string
+}
+export interface MeetingResult {
+  id: number; meeting_id: number; raw_text: string; source_filename: string | null; summary: string
+  decisions: string[]; undecided: string[]; further_discussion: string[]; draft_tasks: TaskDraft[]
+  source: string | null; model: string | null; status: 'draft' | 'confirmed'; confirmed_at: string | null
+  created_at: string; updated_at: string
+}
+export interface Task {
+  id: number; meeting_id: number; meeting_title: string; title: string; description: string
+  assignee_participant_id: number | null; assignee_name: string; assignee_email: string | null
+  due_date: string | null; priority: Priority; status: TaskStatus; from_ai: boolean; reminder_enabled: boolean
+  reminder_sent_at: string | null; completed_at: string | null; created_at: string; updated_at: string
+  can_edit: boolean; can_update_status: boolean
 }

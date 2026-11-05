@@ -8,8 +8,9 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from .config import get_settings
+from . import migrations
 from .database import Base, engine
-from .routers import auth, briefings, dashboard, emails, materials, meetings
+from .routers import auth, briefings, dashboard, emails, materials, meetings, questions, results, tasks
 from .scheduler import shutdown_scheduler, start_scheduler
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -18,7 +19,8 @@ log = logging.getLogger("meeting_mate")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)  # 초기 버전: 테이블 자동 생성 (운영 확장 시 Alembic 도입)
+    Base.metadata.create_all(bind=engine)  # 테이블 자동 생성 (운영 확장 시 Alembic 도입)
+    migrations.run(engine)
     s = get_settings()
     log.info("AI provider=%s, Email provider=%s", s.ai_mode, s.email_mode)
     start_scheduler()
@@ -54,7 +56,8 @@ async def unhandled(request: Request, exc: Exception):
     return JSONResponse(status_code=500, content={"detail": "서버 내부 오류가 발생했습니다."})
 
 
-for r in (auth.router, meetings.router, materials.router, briefings.router, emails.router, dashboard.router):
+for r in (auth.router, meetings.router, materials.router, briefings.router, emails.router, dashboard.router,
+          questions.router, results.router, tasks.router):
     app.include_router(r)
 
 

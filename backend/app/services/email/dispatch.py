@@ -99,6 +99,8 @@ def retry_log(db: Session, log_id: int) -> EmailLog | None:
     entry = db.get(EmailLog, log_id)
     db.refresh(entry)
     meeting = db.get(Meeting, entry.meeting_id)
+    if entry.email_type == "task_reminder":
+        return _retry_task_reminder(db, entry, meeting)
     p = db.get(Participant, entry.participant_id) if entry.participant_id else None
     if p is None:
         entry.status, entry.error = "failed", "참석자가 삭제되어 재시도할 수 없습니다."
@@ -113,6 +115,30 @@ def retry_log(db: Session, log_id: int) -> EmailLog | None:
         entry.subject, entry.body_html, entry.recipient = subject, html, p.email
         entry.status, entry.error, entry.provider_message_id, entry.sent_at = "sent", None, result.message_id, now_utc()
     except (EmailSendError, ValueError) as e:
+        entry.status, entry.error = "failed", str(e)[:2000]
+    db.commit()
+    return entry
+
+
+def _retry_task_reminder(db: Session, entry: EmailLog, meeting: Meeting) -> EmailLog:
+    from ...models import Task
+    from ..task_reminders import today_local
+    from .templates import render_task_reminder
+
+    task = db.get(Task, entry.task_id) if entry.task_id else None
+    if task is None or not task.assignee_email:
+        entry.status, entry.error = "failed", "업무가 삭제되었거나 담당자 이메일이 없어 재시도할 수 없습니다."
+        db.commit()
+        return entry
+    entry.attempts += 1
+    try:
+        provider = get_email_provider()
+        entry.provider = provider.name
+        subject, html = render_task_reminder(task, meeting, today_local())
+        result = provider.send(task.assignee_email, subject, html)
+        entry.subject, entry.body_html, entry.recipient = subject, html, task.assignee_email
+        entry.status, entry.error, entry.provider_message_id, entry.sent_at = "sent", None, result.message_id, now_utc()
+    except EmailSendError as e:
         entry.status, entry.error = "failed", str(e)[:2000]
     db.commit()
     return entry

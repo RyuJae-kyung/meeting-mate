@@ -78,3 +78,33 @@ def render_briefing_email(meeting: Meeting, p: Participant, personal: Briefing, 
 <p style="font-size:12px;color:#9ca3af;margin-top:20px;line-height:1.5">'자료 근거'는 회의 자료/정보에 명시된 내용, 'AI 추론'은 예상 내용, '확인 필요'는 불확실한 내용입니다. AI 추론은 회의에서 결정된 사항이 아닙니다.</p>
 </div></div></body></html>"""
     return subject, html
+
+
+PRIORITY_LABEL = {"high": "높음", "medium": "보통", "low": "낮음"}
+STATUS_LABEL = {"todo": "대기", "in_progress": "진행 중", "done": "완료"}
+
+
+def render_task_reminder(task, meeting: Meeting, today) -> tuple[str, str]:
+    days = (task.due_date - today).days if task.due_date else None
+    when = "오늘 마감" if days == 0 else (f"마감 {days}일 전" if days and days > 0 else f"마감 {abs(days)}일 지남" if days else "마감일 미정")
+    subject = f"[Meeting Mate] 후속 업무 알림 · {task.title} ({when})"
+    base = get_settings().FRONTEND_URL.rstrip("/")
+    due = task.due_date.strftime("%Y년 %m월 %d일") if task.due_date else "미정"
+    desc = f'<p style="font-size:14px;color:#374151;margin:8px 0">{escape(task.description)}</p>' if task.description else ""
+    html = f"""<!doctype html><html><body style="margin:0;background:#f3f4f6;font-family:-apple-system,'Apple SD Gothic Neo','Malgun Gothic',sans-serif;color:#111827">
+<div style="max-width:560px;margin:0 auto;padding:24px 16px"><div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:24px">
+<div style="font-size:12px;color:#6b7280">Meeting Mate · 후속 업무 마감 알림</div>
+<h2 style="margin:6px 0 4px;font-size:19px">{escape(task.title)}</h2>
+<p style="margin:0 0 14px;font-size:13px;color:#b45309;font-weight:600">{escape(when)}</p>
+{desc}
+<table style="font-size:14px;border-collapse:collapse;margin-top:8px">
+<tr><td style="color:#6b7280;padding:3px 14px 3px 0">담당자</td><td>{escape(task.assignee_name or '-')}</td></tr>
+<tr><td style="color:#6b7280;padding:3px 14px 3px 0">마감일</td><td>{due}</td></tr>
+<tr><td style="color:#6b7280;padding:3px 14px 3px 0">우선순위</td><td>{PRIORITY_LABEL.get(task.priority, task.priority)}</td></tr>
+<tr><td style="color:#6b7280;padding:3px 14px 3px 0">진행 상태</td><td>{STATUS_LABEL.get(task.status, task.status)}</td></tr>
+<tr><td style="color:#6b7280;padding:3px 14px 3px 0">관련 회의</td><td>{escape(meeting.title)} ({escape(fmt_range(meeting.start_at, meeting.end_at))})</td></tr>
+</table>
+<div style="margin-top:22px;text-align:center"><a href="{escape(base)}/tasks" style="display:inline-block;background:#4f46e5;color:#fff;text-decoration:none;padding:10px 18px;border-radius:6px;font-size:14px">업무 관리에서 확인하기</a></div>
+<p style="font-size:12px;color:#9ca3af;margin-top:18px">이 알림은 회의 결과 확정 시 '마감 임박 알림'이 켜진 업무에 대해 한 번만 발송됩니다. 받지 않으려면 Meeting Mate 설정에서 이메일 알림을 끄세요.</p>
+</div></div></body></html>"""
+    return subject, html

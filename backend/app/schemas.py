@@ -1,4 +1,5 @@
 """API 요청/응답 스키마 및 AI 결과 검증 스키마."""
+from datetime import date as date_
 from datetime import datetime
 from typing import Literal
 
@@ -276,6 +277,7 @@ class EmailLogOut(ORM):
     meeting_id: int
     participant_id: int | None
     job_id: int | None
+    task_id: int | None = None
     recipient: str
     email_type: str
     subject: str
@@ -333,6 +335,8 @@ class DashboardOut(BaseModel):
     ready: list[MeetingListItem]
     recent_emails: list[EmailLogOut]
     pending_email_jobs: list[EmailJobOut]
+    open_tasks: list["TaskOut"] = Field(default_factory=list)
+    due_soon_tasks: list["TaskOut"] = Field(default_factory=list)
     counts: dict
 
 
@@ -344,5 +348,138 @@ class SystemStatusOut(BaseModel):
     scheduler_enabled: bool
     scheduler_interval_seconds: int
     calendar: str
+    task_reminder_days_before: int
     max_upload_mb: int
     allowed_file_types: list[str]
+
+
+# ---------- Q&A ----------
+class QuestionIn(BaseModel):
+    question: str = Field(min_length=2, max_length=1000)
+
+
+class Citation(BaseModel):
+    file: str
+    loc: str | None = None
+    quote: str = ""
+
+
+class QuestionOut(ORM):
+    id: int
+    meeting_id: int
+    user_id: int | None
+    question: str
+    answer: str
+    grounded: Literal["materials", "partial", "none"]
+    citations: list[Citation]
+    general_knowledge: str | None
+    source: str
+    created_at: datetime
+
+
+# ---------- Meeting results / Tasks ----------
+Priority = Literal["high", "medium", "low"]
+TaskStatusT = Literal["todo", "in_progress", "done"]
+
+
+class TaskDraft(BaseModel):
+    """AI가 추출한 업무 후보 (확정 전, 사용자 수정 가능)."""
+
+    title: str = Field(min_length=1, max_length=300)
+    description: str = Field(default="", max_length=3000)
+    assignee_name: str = Field(default="", max_length=100)
+    assignee_participant_id: int | None = None
+    due_date: date_ | None = None
+    due_text: str | None = Field(default=None, max_length=100)  # 원문 표현 (예: "다음 주 금요일")
+    priority: Priority = "medium"
+    uncertain: bool = False  # 담당자/마감일이 불확실
+    evidence: str = Field(default="", max_length=1000)  # 근거 문장
+
+
+class ResultAnalysis(BaseModel):
+    summary: str = ""
+    decisions: list[str] = Field(default_factory=list)
+    undecided: list[str] = Field(default_factory=list)
+    further_discussion: list[str] = Field(default_factory=list)
+    tasks: list[TaskDraft] = Field(default_factory=list)
+
+
+class MeetingResultOut(ORM):
+    id: int
+    meeting_id: int
+    raw_text: str
+    source_filename: str | None
+    summary: str
+    decisions: list[str]
+    undecided: list[str]
+    further_discussion: list[str]
+    draft_tasks: list[TaskDraft]
+    source: str | None
+    model: str | None
+    status: Literal["draft", "confirmed"]
+    confirmed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class TaskConfirmIn(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    description: str = Field(default="", max_length=3000)
+    assignee_participant_id: int | None = None
+    assignee_name: str = Field(default="", max_length=100)
+    due_date: date_ | None = None
+    priority: Priority = "medium"
+    reminder_enabled: bool = True
+
+
+class ResultConfirmIn(BaseModel):
+    summary: str = Field(default="", max_length=10000)
+    decisions: list[str] = Field(default_factory=list, max_length=100)
+    undecided: list[str] = Field(default_factory=list, max_length=100)
+    further_discussion: list[str] = Field(default_factory=list, max_length=100)
+    tasks: list[TaskConfirmIn] = Field(default_factory=list, max_length=200)
+    mark_completed: bool = True  # 회의 상태를 '진행 완료'로 변경
+
+
+class TaskCreateIn(TaskConfirmIn):
+    status: TaskStatusT = "todo"
+
+
+class TaskUpdateIn(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=300)
+    description: str | None = Field(default=None, max_length=3000)
+    assignee_participant_id: int | None = None
+    assignee_name: str | None = Field(default=None, max_length=100)
+    due_date: date_ | None = None
+    priority: Priority | None = None
+    status: TaskStatusT | None = None
+    reminder_enabled: bool | None = None
+
+
+class TaskStatusIn(BaseModel):
+    status: TaskStatusT
+
+
+class TaskOut(ORM):
+    id: int
+    meeting_id: int
+    meeting_title: str = ""
+    title: str
+    description: str
+    assignee_participant_id: int | None
+    assignee_name: str
+    assignee_email: str | None
+    due_date: date_ | None
+    priority: str
+    status: str
+    from_ai: bool
+    reminder_enabled: bool
+    reminder_sent_at: datetime | None
+    completed_at: datetime | None
+    created_at: datetime
+    updated_at: datetime
+    can_edit: bool = False  # 전체 수정 가능(회의 생성자/관리자)
+    can_update_status: bool = False  # 상태 변경 가능(+ 담당자 본인)
+
+
+DashboardOut.model_rebuild()

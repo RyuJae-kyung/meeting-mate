@@ -1,13 +1,10 @@
-"""데이터베이스 모델.
-
-핵심 흐름(회의 → 자료 → 브리핑 → 이메일)에 필요한 테이블을 정의한다.
-Questions / MeetingResults / Tasks 테이블은 다음 단계에서 추가한다 (docs/ARCHITECTURE.md 참고).
-"""
-from datetime import datetime, timezone
+"""데이터베이스 모델 (구조와 관계는 docs/ARCHITECTURE.md 참고)."""
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -77,6 +74,9 @@ class Meeting(Base):
     )
     email_jobs: Mapped[list["EmailJob"]] = relationship(back_populates="meeting", cascade="all, delete-orphan")
     email_logs: Mapped[list["EmailLog"]] = relationship(back_populates="meeting", cascade="all, delete-orphan")
+    questions: Mapped[list["Question"]] = relationship(back_populates="meeting", cascade="all, delete-orphan")
+    result: Mapped["MeetingResult | None"] = relationship(back_populates="meeting", cascade="all, delete-orphan", uselist=False)
+    tasks: Mapped[list["Task"]] = relationship(back_populates="meeting", cascade="all, delete-orphan", order_by="Task.id")
 
     @property
     def agenda_items(self) -> list[str]:
@@ -193,8 +193,9 @@ class EmailLog(Base):
     meeting_id: Mapped[int] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True)
     participant_id: Mapped[int | None] = mapped_column(ForeignKey("participants.id", ondelete="SET NULL"))
     job_id: Mapped[int | None] = mapped_column(ForeignKey("email_jobs.id", ondelete="SET NULL"), index=True)
+    task_id: Mapped[int | None] = mapped_column(ForeignKey("tasks.id", ondelete="SET NULL"), index=True)
     recipient: Mapped[str] = mapped_column(String(255))
-    email_type: Mapped[str] = mapped_column(String(30), default="briefing")
+    email_type: Mapped[str] = mapped_column(String(30), default="briefing")  # briefing | task_reminder
     subject: Mapped[str] = mapped_column(String(300))
     body_html: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(20))  # sent | failed | retrying
@@ -207,3 +208,79 @@ class EmailLog(Base):
 
     meeting: Mapped[Meeting] = relationship(back_populates="email_logs")
     participant: Mapped[Participant | None] = relationship()
+
+
+class Question(Base):
+    """회의 자료 기반 AI 질의응답 기록."""
+
+    __tablename__ = "questions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    meeting_id: Mapped[int] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    question: Mapped[str] = mapped_column(Text)
+    answer: Mapped[str] = mapped_column(Text)
+    # grounded: materials(자료 근거) | partial(일부 근거 + 일반 지식) | none(자료에서 근거를 찾지 못함)
+    grounded: Mapped[str] = mapped_column(String(20))
+    # [{"file": "a.pdf", "loc": "p.3", "quote": "..."}]
+    citations: Mapped[list] = mapped_column(JSON, default=list)
+    general_knowledge: Mapped[str | None] = mapped_column(Text)  # 자료가 아닌 일반 지식에 기반한 보충 설명
+    source: Mapped[str] = mapped_column(String(20))  # openai | mock
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    meeting: Mapped[Meeting] = relationship(back_populates="questions")
+
+
+class MeetingResult(Base):
+    """회의 종료 후 결과. AI 분석 결과(draft)를 사용자가 확인·수정 후 확정(confirmed)한다."""
+
+    __tablename__ = "meeting_results"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    meeting_id: Mapped[int] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), unique=True)
+    raw_text: Mapped[str] = mapped_column(Text, default="")  # 입력한 회의 내용 / 회의록 파일 추출 텍스트
+    source_filename: Mapped[str | None] = mapped_column(String(255))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    decisions: Mapped[list] = mapped_column(JSON, default=list)  # 최종 결정 사항
+    undecided: Mapped[list] = mapped_column(JSON, default=list)  # 미결정 사항
+    further_discussion: Mapped[list] = mapped_column(JSON, default=list)  # 추가 논의 필요
+    draft_tasks: Mapped[list] = mapped_column(JSON, default=list)  # AI가 추출한 업무 후보 (확정 전)
+    source: Mapped[str | None] = mapped_column(String(20))  # openai | mock
+    model: Mapped[str | None] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | confirmed
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    meeting: Mapped[Meeting] = relationship(back_populates="result")
+
+
+class TaskStatus:
+    TODO = "todo"  # 대기
+    IN_PROGRESS = "in_progress"  # 진행 중
+    DONE = "done"  # 완료
+    ALL = (TODO, IN_PROGRESS, DONE)
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    meeting_id: Mapped[int] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    title: Mapped[str] = mapped_column(String(300))
+    description: Mapped[str] = mapped_column(Text, default="")
+    assignee_participant_id: Mapped[int | None] = mapped_column(ForeignKey("participants.id", ondelete="SET NULL"), index=True)
+    assignee_name: Mapped[str] = mapped_column(String(100), default="")
+    assignee_email: Mapped[str | None] = mapped_column(String(255), index=True)
+    due_date: Mapped[date | None] = mapped_column(Date, index=True)
+    priority: Mapped[str] = mapped_column(String(10), default="medium")  # high | medium | low
+    status: Mapped[str] = mapped_column(String(20), default=TaskStatus.TODO, index=True)
+    from_ai: Mapped[bool] = mapped_column(Boolean, default=False)
+    reminder_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    meeting: Mapped[Meeting] = relationship(back_populates="tasks")

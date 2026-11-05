@@ -1,4 +1,4 @@
-// 브라우저 E2E: 회원가입 → 회의 생성(+자료 4종) → 브리핑 생성/수정 → 용어/개인 브리핑 → 이메일 미리보기·확인·발송·예약 → 개인 링크
+// 브라우저 E2E: 회원가입 → 회의 생성(+자료 4종) → 브리핑 생성/수정 → 용어/개인 브리핑 → 이메일 미리보기·확인·발송·예약 → 개인 링크 → AI 질문 → 회의 결과 분석·수정·확정 → 업무 상태 변경·알림
 // 실행: node e2e/flow.js   (APP_URL, API_URL 환경변수로 대상 변경 가능, playwright 필요)
 const { chromium } = require('playwright');
 const API = process.env.API_URL || 'http://localhost:8000';
@@ -84,6 +84,42 @@ const SHOT = path.join(__dirname, 'screenshots') + '/'; require('fs').mkdirSync(
   await pub.goto('' + (process.env.APP_URL || 'http://localhost:5173') + '/b/' + token);
   await pub.waitForSelector('text=나를 위한 브리핑');
   await pub.screenshot({ path: SHOT + '09-public-mobile.png', fullPage: true });
+  // ⑦ AI 질문하기
+  await page.goto(url.replace(/\?.*$/, '') + '?tab=qa');
+  await page.click('button:has-text("이번 회의에서 가장 중요한 안건은")');
+  await page.waitForSelector('text=참고한 자료', { timeout: 30000 });
+  await page.fill('input[aria-label="질문"]', '예산은 얼마로 산정되었나요?');
+  await page.click('form button:has-text("질문하기")');
+  await page.waitForFunction(() => document.body.innerText.includes('1억 2천만원'), null, { timeout: 30000 });
+  await page.fill('input[aria-label="질문"]', '점심 메뉴는 무엇인가요?');
+  await page.click('form button:has-text("질문하기")');
+  await page.waitForSelector('text=자료에서 근거 없음');
+  await page.screenshot({ path: SHOT + '12-qa.png', fullPage: true });
+  // ⑧ 회의 결과 → 후속 업무
+  await page.goto(url.replace(/\?.*$/, '') + '?tab=result');
+  await page.waitForSelector('text=회의 결과 입력');
+  await page.fill('textarea[aria-label="회의 내용"]', require('fs').readFileSync(path.join(__dirname, '..', 'samples', '회의록_킥오프.txt'), 'utf8'));
+  await page.click('button:has-text("AI로 결과 분석")');
+  await page.waitForSelector('text=분석 결과 확인 및 수정');
+  await page.screenshot({ path: SHOT + '13-result-draft.png', fullPage: true });
+  const rowCount = await page.locator('input[aria-label="업무 내용"]').count();
+  console.log('draft tasks:', rowCount);
+  // 불확실 항목(정과장)에 담당자를 지정하고 마감일 입력 — 사용자 수정 시뮬레이션
+  const last = rowCount - 1;
+  await page.locator('select[aria-label="담당자"]').nth(last).selectOption({ label: '김개발 (개발 담당자)' });
+  await page.locator('input[aria-label="마감일"]').nth(last).fill('2026-11-06');
+  await page.click('button:has-text("확인 후 저장")');
+  await page.waitForSelector('text=확정된 회의 결과');
+  await page.screenshot({ path: SHOT + '14-result-confirmed.png', fullPage: true });
+  // ⑨ 업무 관리
+  await page.goto('' + (process.env.APP_URL || 'http://localhost:5173') + '/tasks');
+  await page.waitForSelector('text=업무 관리');
+  await page.locator('select[aria-label="진행 상태"]').first().selectOption('in_progress');
+  await page.waitForTimeout(400);
+  page.once('dialog', (d) => d.accept());
+  await page.locator('button:has-text("알림")').first().click();
+  await page.waitForSelector('text=알림을 보냈습니다');
+  await page.screenshot({ path: SHOT + '15-tasks.png', fullPage: true });
   await page.goto('' + (process.env.APP_URL || 'http://localhost:5173') + '/');
   await page.waitForSelector('text=예약된 발송');
   await page.screenshot({ path: SHOT + '10-dashboard.png', fullPage: true });

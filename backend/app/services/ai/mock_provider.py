@@ -219,3 +219,88 @@ class MockProvider:
             "preparation": prep,
             "related_terms": related,
         }
+
+    # ---------- 질의응답 ----------
+    def answer_question(self, ctx: MeetingCtx, question: str, chunks: list, glossary: list[dict], briefing_summary: str) -> dict:
+        from ..retrieval import _grams
+
+        q = set(_grams(question))
+        cites, picked = [], []
+        # 추론이 섞인 AI 브리핑보다 실제 자료·회의 정보를 먼저 인용
+        ordered = sorted(chunks[:5], key=lambda c: c.file.startswith("AI 사전 브리핑"))
+        for c in ordered:
+            sents = sorted(_sentences(c.text), key=lambda s: -len(q & set(_grams(s))))
+            best = next((s for s in sents if len(q & set(_grams(s))) >= 2), None)
+            if best is None and len(q & set(_grams(c.text))) >= 2:
+                best = " / ".join(x.strip() for x in c.text.splitlines() if x.strip())  # 목록형 조각은 통째로
+            if best and best not in picked:
+                picked.append(best)
+                cites.append({"ref": c.ref, "quote": best[:300]})
+            if len(picked) >= 3:
+                break
+        terms = [g for g in glossary if _term_pattern(g["term"]).search(question) or g["term"] in question]
+        gk = " ".join(f"{g['term']}: {g['easy_explanation']}" for g in terms[:3]) or None
+        if picked:
+            answer = "[Mock 답변 · 관련 문장 발췌] 회의 자료·회의 정보에서 질문과 관련된 내용은 다음과 같습니다.\n- " + "\n- ".join(picked)
+            return {"answer": answer, "grounded": "partial" if gk else "materials", "citations": cites,
+                    "general_knowledge": f"[용어 설명] {gk}" if gk else None}
+        return {"answer": "[Mock 답변] 업로드된 자료에서 질문에 대한 근거를 찾을 수 없습니다. 회의 주최자에게 확인하거나 관련 자료를 추가해 주세요.",
+                "grounded": "none", "citations": [], "general_knowledge": f"[용어 설명] {gk}" if gk else None}
+
+    # ---------- 회의 결과 분석 ----------
+    def analyze_result(self, ctx: MeetingCtx, raw_text: str, reference_date) -> dict:
+        from ..dates import DUE_RE, find_due
+
+        sents = [s for s in re.split(r"(?<=[.!?。])\s+|\n+", raw_text) if len(s.strip(" -•*\t")) >= 4]
+        sents = [s.strip(" -•*\t") for s in sents]
+        names = [p.name for p in ctx.participants if p.name]
+        undecided_re = re.compile(r"미정|보류|결정하지\s*못|정하지\s*못|결정되지\s*않|결론(?:이|을)?\s*(?:나지|내지)\s*못|추후\s*결정|확정되지\s*않|정해지지\s*않")
+        further_re = re.compile(r"추가\s*논의|다음\s*회의|재논의|다시\s*논의|추가로\s*논의|별도\s*회의")
+        decision_re = re.compile(r"결정(?:했|함|됨|되었)|확정|합의|하기로")
+        action_re = re.compile(r"작성|정리|테스트|검토|공유|준비|개발|수정|확인|전달|보고|진행|요청|조사|분석|협의|설계|구현|배포|발송"
+                               r"|보내|제출|회신|송부|마련|확보|섭외|예약|업데이트|하기로")
+        decisions, undecided, further, tasks = [], [], [], []
+        for s in sents:
+            is_undecided = bool(undecided_re.search(s))
+            if is_undecided:
+                undecided.append(s)
+            if further_re.search(s):
+                further.append(s)
+            if not is_undecided and not further_re.search(s) and decision_re.search(s):
+                decisions.append(s)
+            # 업무: 담당자(참석자 이름, 'OO님', '담당:') + (행동 or 마감일)
+            who = next((n for n in names if n in s), None)
+            if who is None and (m := re.search(
+                r"([가-힣]{2,4})\s*님|담당\s*[:：]\s*([가-힣A-Za-z]{2,10})"
+                r"|(?<![가-힣])([가-힣]{1,3}(?:대리|과장|차장|부장|팀장|주임|사원|매니저|책임|선임|수석|이사|상무|대표))(?=님|이|가|은|는|께서|\s|:)", s)):
+                who = m.group(1) or m.group(2) or m.group(3)
+            due, due_text = find_due(s, reference_date)
+            if is_undecided and who is None:
+                continue  # 담당자도 정해지지 않은 미결정 사항은 업무로 만들지 않음
+            if (who or re.search(r"담당|까지", s)) and (action_re.search(s) or due_text):
+                title = s
+                if who:
+                    title = re.sub(rf"{re.escape(who)}\s*(?:님|씨)?\s*(?:이|가|은|는|께서)?\s*[:：]?\s*", "", title, count=1)
+                if due_text:
+                    title = title.replace(due_text, "")
+                title = re.sub(r"^\s*(?:담당\s*[:：]\s*)", "", title)
+                title = re.sub(r"\s*까지\s*", " ", title)
+                title = re.sub(r"\(\s*(?:긴급|급함|중요|최우선|ASAP|asap)\s*\)", "", title)
+                title = re.sub(r"\(\s*\)|\s{2,}", " ", title).strip(" ,.:-·")
+                if title.count("(") != title.count(")"):
+                    title = title.replace("(", "").replace(")", "").strip()
+                if len(title) < 2:
+                    continue
+                urgent = re.search(r"긴급|급히|시급|최우선|ASAP|asap|우선적으로|빠르게", s)
+                soon = due is not None and (due - reference_date).days <= 3
+                prio = "high" if urgent or soon else ("low" if re.search(r"여유|가능하면|선택", s) else "medium")
+                tasks.append({
+                    "title": title[:300], "description": "", "assignee_name": who or "",
+                    "due_date": due.isoformat() if due else None, "due_text": due_text,
+                    "priority": prio, "uncertain": who is None or due is None, "evidence": s[:1000],
+                })
+        head = " ".join(sents[:2])[:300]
+        summary = (f"[Mock 요약] 결정 {len(decisions)}건, 미결정 {len(undecided)}건, 추가 논의 {len(further)}건, "
+                   f"후속 업무 후보 {len(tasks)}건을 문장 규칙으로 추출했습니다. 첫 부분: {head}")
+        return {"summary": summary, "decisions": decisions, "undecided": undecided,
+                "further_discussion": further, "tasks": tasks}

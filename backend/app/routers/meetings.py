@@ -168,3 +168,15 @@ def delete_participant(pid: int, user: User = Depends(get_current_user), db: Ses
     p = _participant_for_edit(pid, db, user)
     db.delete(p)
     db.commit()
+
+
+@router.get("/meetings/{meeting_id}/ics")
+def meeting_ics(meeting_id: int, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    from fastapi.responses import Response
+
+    from ..config import get_settings
+    from ..services.calendar import meeting_to_ics
+
+    m = get_meeting_for_view(meeting_id, db, user)
+    return Response(meeting_to_ics(m, get_settings().FRONTEND_URL), media_type="text/calendar; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="meeting-{m.id}.ics"'})

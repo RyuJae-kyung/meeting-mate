@@ -9,6 +9,7 @@ import MeetingNewPage from './pages/MeetingNewPage'
 import MeetingsPage from './pages/MeetingsPage'
 import PublicBriefingPage from './pages/PublicBriefingPage'
 import SettingsPage from './pages/SettingsPage'
+import TasksPage from './pages/TasksPage'
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { user, loading } = useAuth()
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/meetings" element={<MeetingsPage />} />
         <Route path="/meetings/new" element={<MeetingNewPage />} />
         <Route path="/meetings/:id" element={<MeetingDetailPage />} />
+        <Route path="/tasks" element={<TasksPage />} />
         <Route path="/settings" element={<SettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

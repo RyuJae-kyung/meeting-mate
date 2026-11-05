@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"
     MAX_UPLOAD_MB: int = 20
 
+    # 후속 업무 마감 알림: 마감 N일 전부터 (미완료 + 알림 켜짐 + 미발송) 1회 발송
+    TASK_REMINDER_DAYS_BEFORE: int = 1
     SCHEDULER_ENABLED: bool = True
     SCHEDULER_INTERVAL_SECONDS: int = 30
 

@@ -1,5 +1,6 @@
 """AI 공통 인터페이스와 입력 컨텍스트."""
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Protocol
 
 
@@ -58,3 +59,11 @@ class AIProvider(Protocol):
     def extract_glossary(self, ctx: MeetingCtx) -> list[dict]: ...
 
     def personal_briefing(self, ctx: MeetingCtx, participant: ParticipantCtx, glossary_terms: list[str]) -> dict: ...
+
+    def answer_question(self, ctx: MeetingCtx, question: str, chunks: list, glossary: list[dict], briefing_summary: str) -> dict:
+        """반환: {answer, grounded: materials|partial|none, citations: [{ref, quote}], general_knowledge}"""
+        ...
+
+    def analyze_result(self, ctx: MeetingCtx, raw_text: str, reference_date: date) -> dict:
+        """반환: ResultAnalysis 형태 dict (tasks 의 담당자는 이름만, 참석자 매칭은 서비스에서)"""
+        ...

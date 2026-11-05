@@ -5,6 +5,7 @@ const NAV = [
   { to: '/', label: '대시보드', end: true },
   { to: '/meetings', label: '회의 목록', end: false },
   { to: '/meetings/new', label: '새 회의', end: true },
+  { to: '/tasks', label: '업무 관리', end: true },
   { to: '/settings', label: '설정', end: true },
 ]
 

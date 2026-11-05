@@ -170,7 +170,7 @@ export default function EmailTab({ m }: { m: MeetingDetail }) {
               <tbody className="divide-y">
                 {logs.map((l) => (
                   <tr key={l.id}>
-                    <td className="py-2 pr-3"><p>{name(l.participant_id)}</p><p className="text-xs text-gray-500">{l.recipient}</p>{l.error && <p className="max-w-md text-xs text-red-600">{l.error}</p>}</td>
+                    <td className="py-2 pr-3"><p>{name(l.participant_id)}{l.email_type === 'task_reminder' && <span className="ml-1.5 rounded bg-gray-100 px-1 py-0.5 text-[10px] text-gray-600">업무 알림</span>}</p><p className="text-xs text-gray-500">{l.recipient}</p>{l.error && <p className="max-w-md text-xs text-red-600">{l.error}</p>}</td>
                     <td className="py-2 pr-3"><EmailStatusBadge status={l.status} provider={l.provider} /></td>
                     <td className="whitespace-nowrap py-2 pr-3 text-xs text-gray-500">{fmtDateTime(l.sent_at || l.created_at)}</td>
                     <td className="py-2 pr-3 text-xs text-gray-500">{l.attempts}</td>
